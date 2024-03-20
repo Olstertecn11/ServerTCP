@@ -15,6 +15,7 @@ class Server:
         self.ip = ip
         self.connected_clients = []
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.collision_sent = {}
         self.codes_dictionary = {
             "200": self.controller.add,
             "203": self.controller.remove
@@ -39,9 +40,11 @@ class Server:
             else:
                 self.broadcast_message(request, exclude=ip)
 
+
     def start_client_handling(self, conn, addr):
         print('Conexión establecida por', addr)
         self.connected_clients.append((conn, addr))
+
         try:
             self.controller.printDevices()
             while True:
@@ -49,22 +52,23 @@ class Server:
                 if not data:
                     break
                 print('Mensaje recibido:', data.decode())
-                if "time" in data.codecode():
+                if "time" in data.decode():
                     message_json = json.loads(data.decode())
                     message_time = message_json["time"]
                     self.last_message_times[addr[0]] = message_time
                 # Verificar colisiones
-                if self.detect_collision(data, addr[0]):
-                    self.send_collision_message(addr[0])
+                if addr[0] not in self.collision_sent or not self.collision_sent[addr[0]]:
+                    if self.detect_collision(data, addr[0]):
+                        self.send_collision_message(addr[0])
+                        self.collision_sent[addr[0]] = True  # Configurar la bandera para este cliente
                 else:
                     self.analyze_request(data, addr)
+
         except ConnectionResetError:
             print('Dispositivo {} ha salido de la sesión'.format(addr[0]))
             self.connected_clients.remove((conn, addr))
             conn.close()
 
-
-    
 
     def detect_collision(self, message, client_ip):
         message_json = json.loads(message.decode())
@@ -76,27 +80,18 @@ class Server:
 
         last_message_time = self.last_message_times.get(client_ip, "")
         if last_message_time:
-            last_message_parts = last_message_time.split(":")
-            current_message_parts = message_time.split(":")
+            print(f"Last message time for {client_ip}: {last_message_time}")
+            print(f"Current message time for {client_ip}: {message_time}")
 
-            print(f"t1: #{last_message_parts}  -- t2:#{current_message_parts}")
-
-            # Convertir partes de tiempo a enteros
-            last_message_parts = [int(part) for part in last_message_parts]
-            current_message_parts = [int(part) for part in current_message_parts]
-
-            # Verificar si hay una diferencia de 1 segundo o menos entre los segundos de los mensajes
-            if (current_message_parts[0] == last_message_parts[0] and
-                current_message_parts[1] == last_message_parts[1] and
-                abs(current_message_parts[2] - last_message_parts[2]) <= 1):
-                self.last_message_times[client_ip] = message_time
+            # Comparar los tiempos completos de los mensajes
+            if message_time == last_message_time:
+                # Si hay colisión, no actualizar el tiempo del último mensaje
+                self.send_collision_message(client_ip)
                 return True
 
         # Si no hay colisión, actualizar el tiempo del último mensaje
         self.last_message_times[client_ip] = message_time
         return False
-
-
 
     def start(self):
         self.server.bind((self.ip, self.port))
@@ -123,5 +118,4 @@ class Server:
 
     def close(self):
         self.server.close()
-
 
